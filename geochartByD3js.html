@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UAE Geo Chart</title>
+    <style>
+        /* Basic styling for the body */
+        body {
+            margin: 0;
+            overflow: hidden; /* Hide scrollbars if content overflows */
+            font-family: 'Inter', sans-serif; /* Use Inter font */
+            background-color: #f0f4f8; /* Light background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        /* Styling for the SVG container */
+        svg {
+            background-color: #e0f2f7; /* Light blue background for the map area */
+            border-radius: 12px; /* Rounded corners for the map */
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+        }
+
+        /* Styling for the countries/regions paths */
+        .country {
+            fill: #c8e6c9; /* Changed to light green for the land */
+            stroke: #337ab7; /* Darker blue for borders */
+            stroke-width: 0.75px; /* Thicker borders */
+            transition: fill 0.3s ease; /* Smooth transition on hover */
+        }
+
+        .country:hover {
+            fill: #a5d6a7; /* Slightly darker green on hover */
+        }
+
+        /* Styling for the markers (circles) - fill handled dynamically now */
+        .marker {
+            stroke: #ffffff; /* White stroke */
+            stroke-width: 1.5px; /* Thicker stroke */
+            cursor: pointer; /* Pointer cursor on hover */
+            transition: all 0.2s ease-in-out; /* Smooth transition */
+        }
+
+        .marker:hover {
+            transform: scale(1.2); /* Slightly enlarge on hover */
+        }
+
+        /* Styling for the marker labels (text) */
+        .marker-label, .marker-value-label {
+            font-weight: 600; /* Bolder text for both */
+            text-anchor: middle; /* Center the text */
+            fill: #2c3e50; /* Dark grey text color */
+            pointer-events: none; /* Make text non-interactive to allow clicking marker */
+            user-select: none; /* Prevent text selection */
+            opacity: 1; /* Always visible */
+            background-color: #ffffff; /* Solid white background */
+            padding: 2px 5px; /* Padding around text */
+            border-radius: 4px; /* Rounded corners for the background */
+            font-size: 10px; /* Default size for both */
+            border: 1px solid #cccccc; /* Added light grey border */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); /* Subtle shadow for better definition */
+        }
+
+        .marker-value-label {
+            font-size: 9px; /* Smaller font for value */
+            fill: #555; /* Slightly lighter grey for value */
+        }
+    </style>
+</head>
+<body>
+    <!-- Moved D3.js library import and script block to the end of the body -->
+    <!-- to ensure D3 is loaded before it's used. -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <script>
+        // Define the UAE regions with their names and coordinates
+        const uaeRegions = [
+            { name: 'Dubai', lat: 25.2048, lng: 55.2708 },
+            { name: 'Al Ain', lat: 24.2075, lng: 55.7461 },
+            { name: 'Ras Al-Khaimah', lat: 25.7895, lng: 55.9432 },
+            { name: 'West Coast', lat: 24.3713, lng: 54.4485 },
+            { name: 'East Coast', lat: 25.3302, lng: 56.3439 },
+            { name: 'Western Region', lat: 23.4241, lng: 53.8478 },
+        ];
+
+        // Your data to be plotted, mapped to region names for easier lookup
+        const plotDataMap = {
+            'Dubai': 45,
+            'Al Ain': 35,
+            'Ras Al-Khaimah': 15,
+            'West Coast': 33,
+            'East Coast': 21,
+            'Western Region': 20,
+        };
+
+        // Merge uaeRegions with the plotDataMap to include values
+        const combinedData = uaeRegions.map(region => {
+            return {
+                ...region,
+                value: plotDataMap[region.name] || 0 // Assign value, default to 0 if not found
+            };
+        });
+
+        // Define a color palette for markers, one color for each region
+        const markerColors = [
+            "#FF6347", // Tomato (Dubai)
+            "#FFD700", // Gold (Al Ain)
+            "#6A5ACD", // SlateBlue (Ras Al-Khaimah)
+            "#32CD32", // LimeGreen (West Coast)
+            "#4169E1", // RoyalBlue (East Coast)
+            "#8A2BE2"  // BlueViolet (Western Region)
+        ];
+
+        // Determine the range of values for scaling marker size
+        const minVal = d3.min(combinedData, d => d.value);
+        const maxVal = d3.max(combinedData, d => d.value);
+
+        // Create a linear scale for marker radius.
+        // It maps the data values to a desired range of pixel radii.
+        const radiusScale = d3.scaleLinear()
+            .domain([minVal, maxVal]) // Input domain (your data values)
+            .range([8, 20]); // Output range (corresponding pixel radii for markers)
+
+        // Set dimensions for the SVG container based on window size
+        const width = window.innerWidth * 0.8; // 80% of window width
+        const height = window.innerHeight * 0.8; // 80% of window height
+
+        // Append an SVG element to the body
+        const svg = d3.select("body").append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Define a Mercator projection, commonly used for web maps.
+        // This projection transforms spherical coordinates (latitude, longitude)
+        // into planar coordinates (x, y) suitable for drawing on a 2D surface.
+        const projection = d3.geoMercator()
+            // Set the center of the projection to roughly the center of the UAE.
+            // These values (longitude, latitude) ensure the map is centered correctly.
+            .center([54.5, 24])
+            // Scale the map to fit within the SVG. The multiplier (width * 7) is
+            // an empirical value to get a good zoom level for the UAE.
+            .scale(width * 7)
+            // Translate the projected coordinates to the center of the SVG element.
+            // This ensures the map is visually centered within the SVG area.
+            .translate([width / 2, height / 2]);
+
+        // Create a D3 geo path generator. This tool takes GeoJSON geometries
+        // and converts them into SVG path data using the specified projection.
+        const path = d3.geoPath()
+            .projection(projection); // Link the path generator to our projection
+
+        // Load the GeoJSON data from the specified URL.
+        // d3.json() is used for fetching JSON data.
+        d3.json("https://raw.githubusercontent.com/izuku-mi/geochart/9c1b9686b83ef558281c25dd917b20acd27f11d0/ae.json").then(function(geojson) {
+            // Draw the UAE regions (countries/provinces) based on the GeoJSON features.
+            // Select all elements with class 'country' (none exist yet).
+            svg.selectAll(".country")
+                // Bind the GeoJSON features array to these selections.
+                .data(geojson.features)
+                // For each data point that doesn't have a corresponding element, append a 'path'.
+                .enter().append("path")
+                // Assign the 'country' class for styling.
+                .attr("class", "country")
+                // Set the 'd' attribute of the path, which defines its shape.
+                // The path generator converts the GeoJSON geometry into SVG path commands.
+                .attr("d", path);
+
+            // Add markers for the specified UAE regions (Dubai, Al Ain, etc.).
+            // Select all elements with class 'marker-group' (none exist yet).
+            const markers = svg.selectAll(".marker-group")
+                // Bind the combinedData array to these selections.
+                .data(combinedData)
+                // For each data point, append a 'g' (group) element.
+                // This group will contain both the circle marker and its text label.
+                .enter().append("g")
+                .attr("class", "marker-group")
+                // Position the group using the projection.
+                // projection([longitude, latitude]) converts geographic coordinates
+                // into screen coordinates (x, y) which are then used for translation.
+                .attr("transform", d => `translate(${projection([d.lng, d.lat])})`);
+
+            // Append a circle to each marker group.
+            markers.append("circle")
+                .attr("class", "marker") // Assign the 'marker' class for styling
+                .attr("r", d => radiusScale(d.value)) // Set radius dynamically based on scaled value
+                .style("fill", (d, i) => markerColors[i % markerColors.length]); // Assign different colors using modulo for cycling
+
+            // Append text (label) for the region name to each marker group.
+            markers.append("text")
+                .attr("class", "marker-label") // Assign the 'marker-label' class for styling
+                .attr("y", d => -radiusScale(d.value) - 15) // Position above the marker, adjusted for dynamic size
+                .text(d => d.name); // Set the text content to the region's name
+
+            // Append text (label) for the value to each marker group.
+            markers.append("text")
+                .attr("class", "marker-value-label") // Assign the 'marker-value-label' class for styling
+                .attr("y", d => -radiusScale(d.value) + 0) // Position slightly below the name label, adjusted for dynamic size
+                .text(d => `Value: ${d.value}`); // Display the value
+
+        }).catch(function(error){
+            // Log any errors that occur during the GeoJSON loading process
+            console.error("Error loading the GeoJSON data or rendering the chart: ", error);
+        });
+
+        // Add a resize event listener to make the chart responsive
+        window.addEventListener('resize', () => {
+            const newWidth = window.innerWidth * 0.8;
+            const newHeight = window.innerHeight * 0.8;
+
+            svg.attr("width", newWidth)
+               .attr("height", newHeight);
+
+            // Update projection scale and translation based on new dimensions
+            projection.scale(newWidth * 7).translate([newWidth / 2, newHeight / 2]);
+
+            // Redraw the map paths
+            svg.selectAll(".country").attr("d", path);
+
+            // Reposition the markers and labels
+            svg.selectAll(".marker-group")
+                .attr("transform", d => `translate(${projection([d.lng, d.lat])})`);
+
+            // Re-adjust label positions based on new marker sizes (if they change with scale)
+            svg.selectAll(".marker-label")
+                .attr("y", d => -radiusScale(d.value) - 15);
+            svg.selectAll(".marker-value-label")
+                .attr("y", d => -radiusScale(d.value) + 0);
+        });
+    </script>
+</body>
+</html>
